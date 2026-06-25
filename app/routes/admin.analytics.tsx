@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   Link,
   data,
@@ -21,7 +22,10 @@ import { UserRole } from "~/db/schema";
 import {
   getAdminAnalyticsSummary,
   getAdminRevenueTimeSeries,
+  getAdminInstructorList,
+  getAdminPerCourseBreakdown,
   type TimePeriod,
+  type AdminCourseAnalytics,
 } from "~/services/analyticsService";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { cn, formatPrice } from "~/lib/utils";
@@ -31,6 +35,9 @@ import {
   Trophy,
   PackageOpen,
   AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 
@@ -74,21 +81,106 @@ export async function loader({ request }: Route.LoaderArgs) {
     ? (periodParam as TimePeriod)
     : "30d";
 
+  const instructorParam = url.searchParams.get("instructor");
+  const selectedInstructorId = instructorParam
+    ? parseInt(instructorParam, 10) || undefined
+    : undefined;
+
   const summary = getAdminAnalyticsSummary({ period });
   const timeSeries = getAdminRevenueTimeSeries({ period });
+  const instructors = getAdminInstructorList();
+  const courseBreakdown = getAdminPerCourseBreakdown({
+    period,
+    instructorId: selectedInstructorId,
+  });
 
-  return { summary, timeSeries, period };
+  return {
+    summary,
+    timeSeries,
+    period,
+    instructors,
+    courseBreakdown,
+    selectedInstructorId: selectedInstructorId ?? null,
+  };
 }
 
+type SortField = keyof Pick<
+  AdminCourseAnalytics,
+  | "title"
+  | "instructorName"
+  | "listPrice"
+  | "revenue"
+  | "salesCount"
+  | "enrollmentCount"
+  | "averageRating"
+  | "ratingCount"
+>;
+
 export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
-  const { summary, timeSeries, period } = loaderData;
+  const {
+    summary,
+    timeSeries,
+    period,
+    instructors,
+    courseBreakdown,
+    selectedInstructorId,
+  } = loaderData;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const [sortField, setSortField] = useState<SortField>("revenue");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   function handlePeriodChange(newPeriod: TimePeriod) {
     const params = new URLSearchParams(searchParams);
     params.set("period", newPeriod);
     navigate(`?${params.toString()}`, { replace: true });
+  }
+
+  function handleInstructorChange(value: string) {
+    const params = new URLSearchParams(searchParams);
+    if (value === "all") {
+      params.delete("instructor");
+    } else {
+      params.set("instructor", value);
+    }
+    navigate(`?${params.toString()}`, { replace: true });
+  }
+
+  function handleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  }
+
+  const sortedCourses = [...courseBreakdown].sort((a, b) => {
+    const aVal = a[sortField];
+    const bVal = b[sortField];
+    if (aVal === null && bVal === null) return 0;
+    if (aVal === null) return 1;
+    if (bVal === null) return -1;
+    if (typeof aVal === "string" && typeof bVal === "string") {
+      return sortDirection === "asc"
+        ? aVal.localeCompare(bVal)
+        : bVal.localeCompare(aVal);
+    }
+    return sortDirection === "asc"
+      ? (aVal as number) - (bVal as number)
+      : (bVal as number) - (aVal as number);
+  });
+
+  function SortIcon({ field }: { field: SortField }) {
+    if (sortField !== field)
+      return (
+        <ArrowUpDown className="ml-1 inline size-3 text-muted-foreground" />
+      );
+    return sortDirection === "asc" ? (
+      <ArrowUp className="ml-1 inline size-3" />
+    ) : (
+      <ArrowDown className="ml-1 inline size-3" />
+    );
   }
 
   const hasData =
@@ -258,6 +350,138 @@ export default function AdminAnalytics({ loaderData }: Route.ComponentProps) {
             </CardContent>
           </Card>
         )}
+
+        {/* Course Breakdown Table */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Course Breakdown</CardTitle>
+            {instructors.length > 0 && (
+              <select
+                value={selectedInstructorId?.toString() ?? "all"}
+                onChange={(e) => handleInstructorChange(e.target.value)}
+                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                <option value="all">All Instructors</option>
+                {instructors.map((instructor) => (
+                  <option key={instructor.id} value={instructor.id.toString()}>
+                    {instructor.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </CardHeader>
+          <CardContent>
+            {sortedCourses.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                No courses found for this period.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left">
+                      <th className="pb-3 pr-4 font-medium">
+                        <button
+                          onClick={() => handleSort("title")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          Course
+                          <SortIcon field="title" />
+                        </button>
+                      </th>
+                      <th className="pb-3 pr-4 font-medium">
+                        <button
+                          onClick={() => handleSort("instructorName")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          Instructor
+                          <SortIcon field="instructorName" />
+                        </button>
+                      </th>
+                      <th className="pb-3 pr-4 text-right font-medium">
+                        <button
+                          onClick={() => handleSort("listPrice")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          List Price
+                          <SortIcon field="listPrice" />
+                        </button>
+                      </th>
+                      <th className="pb-3 pr-4 text-right font-medium">
+                        <button
+                          onClick={() => handleSort("revenue")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          Revenue
+                          <SortIcon field="revenue" />
+                        </button>
+                      </th>
+                      <th className="pb-3 pr-4 text-right font-medium">
+                        <button
+                          onClick={() => handleSort("salesCount")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          Sales
+                          <SortIcon field="salesCount" />
+                        </button>
+                      </th>
+                      <th className="pb-3 pr-4 text-right font-medium">
+                        <button
+                          onClick={() => handleSort("enrollmentCount")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          Enrollments
+                          <SortIcon field="enrollmentCount" />
+                        </button>
+                      </th>
+                      <th className="pb-3 text-right font-medium">
+                        <button
+                          onClick={() => handleSort("averageRating")}
+                          className="inline-flex items-center hover:text-foreground"
+                        >
+                          Avg Rating
+                          <SortIcon field="averageRating" />
+                        </button>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedCourses.map((course) => (
+                      <tr
+                        key={course.courseId}
+                        className="border-b last:border-0"
+                      >
+                        <td className="py-3 pr-4 font-medium">
+                          {course.title}
+                        </td>
+                        <td className="py-3 pr-4 text-muted-foreground">
+                          {course.instructorName}
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          {formatPrice(course.listPrice)}
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          {formatPrice(course.revenue)}
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          {course.salesCount.toLocaleString()}
+                        </td>
+                        <td className="py-3 pr-4 text-right">
+                          {course.enrollmentCount.toLocaleString()}
+                        </td>
+                        <td className="py-3 text-right">
+                          {course.averageRating !== null
+                            ? course.averageRating.toFixed(1)
+                            : "N/A"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
