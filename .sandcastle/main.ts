@@ -1,15 +1,18 @@
 import { run, claudeCode } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
-const [, , planAndPrd, maxIterations] = process.argv;
+const [, , prdPath, planPath, maxIterationsArg] = process.argv;
+
+const parsedIterations = Number(maxIterationsArg);
+const maxIterations = Number.isFinite(parsedIterations) ? parsedIterations : 3;
 
 await run({
   sandbox: docker(),
   agent: claudeCode("claude-sonnet-4-6"),
   promptFile: `.sandcastle/sandcastle-prompt.md`,
-  maxIterations: Number(maxIterations) ?? 3,
+  maxIterations,
   promptArgs: {
-    INPUTS: planAndPrd,
+    INPUTS: `PRD: ${prdPath}\nPlan: ${planPath}`,
   },
   hooks: {
     onSandboxReady: [{ command: "pnpm install" }],
